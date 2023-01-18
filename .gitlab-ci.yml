@@ -1,0 +1,124 @@
+variables:
+    FRONT_PATH: "frontend"
+    BACK_PATH: "backend/digitalBooking/"
+
+#Stages for jobs 
+stages:
+    - build
+    - test
+    - deploy
+
+cache:
+    paths:
+    - $FRONT_PATH/node_modules/
+
+#<----------------Backend Jobs------------------->
+#test backend
+.test-backend:
+    stage: test
+    image: maven:3.6.1-jdk-8-slim 
+    rules:
+        - if: '$CI_COMMIT_REF_NAME == "dev"'
+        - changes:
+            - backend/**/*
+    before_script:
+        - cd $BACK_PATH
+    script:
+        - echo "Running backend unit tests..."
+        #- mvn clean test
+        - echo "passed backend unit tests"
+
+# #build backend
+.build-backend:
+    stage: build
+    image: maven:3.8.6-eclipse-temurin-17
+    rules:
+        - if: '$CI_COMMIT_REF_NAME == "dev"'
+        - changes:
+            - backend/**/*
+    before_script:
+        - cd $BACK_PATH
+    script:
+        - echo "Compiling backend code..."
+        #-docker...
+        #- mvn compile
+        - mvn clean package
+    artifacts:
+        paths:
+            - $BACK_PATH/target/*.jar
+
+#deploy backend
+.deploy-backend:
+    stage: deploy
+    image: alpine:3.11
+    environment: production
+    rules:
+        - if: '$CI_COMMIT_REF_NAME == "dev"'
+        - changes:
+            - backend/**/*
+    before_script:
+        - cd $BACK_PATH
+        - apk update && apk add openssh-client bash
+        - mkdir -p ~/.ssh
+        - eval $(ssh-agent -s)
+        - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - > /dev/null
+        - touch ~/.ssh/config
+        - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+        - ssh-keyscan -H $DEPLOY_SERVER_IP >> ~/.ssh/known_hosts
+    script:
+        - echo "Deploying started..."
+        - ssh ubuntu@$DEPLOY_SERVER_IP "sudo systemctl stop digitalBookingApi.service"
+        - scp $BACK_PATH/target/*.jar ubuntu@$DEPLOY_SERVER_IP:~/digitalBookingApi/
+        - ssh ubuntu@$DEPLOY_SERVER_IP "sudo systemctl start digitalBookingApi.service"
+        - echo "Finished deploying the app."
+
+
+#<----------------Frontend Jobs------------------->
+# #test frontend
+test-frontend:
+    stage: test
+    image: node:16-alpine
+    rules:
+        - if: '$CI_COMMIT_REF_NAME == "dev"'
+        - changes:
+            - frontend/**/*
+    before_script:
+        - cd $FRONT_PATH
+    script:
+        - echo "Running frontend tests..."
+        # - npm test
+
+# #build frontend
+build-frontend:
+    stage: build
+    image: node:16-alpine
+    rules:
+        - if: '$CI_COMMIT_REF_NAME == "dev"'
+        - changes:
+            - frontend/**/*
+    before_script:
+        - cd $FRONT_PATH
+    script:
+        - echo "Compiling frontend code..."
+        - npm install
+        - npm run build
+    artifacts:
+        paths:
+            - $FRONT_PATH/build/
+
+# #deploy frontend
+deploy-frontend:
+    stage: deploy
+    image: 
+        name: amazon/aws-cli:2.4.11
+        entrypoint: [""]
+    rules:
+        - if: '$CI_COMMIT_REF_NAME == "dev"'
+        - changes:
+            - frontend/**/*
+    before_script:
+        - cd $FRONT_PATH
+    script:
+        - aws --version
+        - aws s3 sync build/ s3://$AWS_S3_BUCKET --delete
+    
